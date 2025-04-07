@@ -1,87 +1,55 @@
-from flask import Flask, request, jsonify
-from finalenva import CustomSearchAndRescueEnv  # Replace with your module if needed
-import random
-import json
+from flask import Flask, jsonify, request
+from finalenva import CustomSearchAndRescueEnv
 
 app = Flask(__name__)
 
-# Config for your environment
+# Initialize once — GLOBAL ENV!
 config = {
     "grid_size": 10,
-    "num_agents": 2,
+    "num_agents": 1,
     "num_targets": 2,
     "observation_size": 3,
     "max_steps": 50,
     "output_file": "output.json"
 }
 
-# Load environment
 env = CustomSearchAndRescueEnv(config)
-observations = env.reset()
+obs = env.reset()
 done = {"__all__": False}
 
-
-@app.route('/', methods=['GET'])
+@app.route("/", methods=["GET"])
 def home():
-    return "Search & Rescue Environment is Running. Use POST /step to interact."
+    return "🚀 Search and Rescue Environment Ready"
 
-
-@app.route('/step', methods=['POST'])
+@app.route("/step", methods=["POST"])
 def step():
-    global observations, done
-
-    if done["__all__"]:
-        return jsonify({"message": "Episode finished. Resetting environment."}), 200
-
-    actions = {agent: env.action_space.sample() for agent in env.agents}  # random actions
-    observations, rewards, done, info = env.step(actions)
-
-    # Latest state for all agents
-    latest_data = env.data_to_log[-len(env.agents):]
+    global obs, done
 
     if done["__all__"]:
         env.close()
+        return jsonify({"message": "Episode finished. Resetting environment."}), 200
 
-    return jsonify(latest_data), 200
+    # Random actions or get from user
+    actions = {agent: env.action_space.sample() for agent in env.agents}
+    
+    obs, rewards, done, info, agent_states = env.step(actions)
 
+    step_info = {
+        "step_number": env.time,
+        "actions": actions,
+        "rewards": rewards,
+        "done": done["__all__"],
+        "agent_states": agent_states
+    }
 
-@app.route('/reset', methods=['POST'])
+    return jsonify(step_info), 200
+
+@app.route("/reset", methods=["POST"])
 def reset():
-    global observations, done
-    observations = env.reset()
-    done = {"__all__": False}
-    return jsonify({"message": "Environment reset!"}), 200
-
-
-@app.route('/run_until_found', methods=['POST'])
-def run_until_found():
-    global env
+    global obs, done
     obs = env.reset()
     done = {"__all__": False}
-    victim_found = False
-    final_info = None
+    return jsonify({"message": "Environment reset"}), 200
 
-    while not done["__all__"] and not victim_found:
-        actions = {agent: env.action_space.sample() for agent in env.agents}
-        obs, rewards, done, infos = env.step(actions)
-
-        for agent in env.agents:
-            # Check if victim was found in the recent log
-            recent_state = env.data_to_log[-len(env.agents):]
-            for state in recent_state:
-                if state["agent_id"] == agent and state.get("victim_found"):
-                    final_info = state
-                    final_info["path_taken"] = env.agent_paths[agent]
-                    victim_found = True
-                    break
-            if victim_found:
-                break
-
-    if final_info:
-        return jsonify(final_info), 200
-    else:
-        return jsonify({"message": "Victim not found within max steps."}), 404
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
