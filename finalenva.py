@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import gym
 from gym import spaces
@@ -15,6 +16,7 @@ class CustomSearchAndRescueEnv(gym.Env):
         self.observation_size = config.get("observation_size", 3)
         self.max_steps = config.get("max_steps", 100)
         self.output_file = config.get("output_file", "output.json")
+        self.agent_states = {}
 
         self.action_space = spaces.Discrete(5)
         self.observation_space = spaces.Box(low=0, high=1,
@@ -24,6 +26,8 @@ class CustomSearchAndRescueEnv(gym.Env):
         self.reset()
 
     def reset(self):
+
+        random.seed(time.time())
         self.time = 0
         self.agent_positions = {
             agent: (random.randint(0, self.grid_size - 1), random.randint(0, self.grid_size - 1))
@@ -41,6 +45,9 @@ class CustomSearchAndRescueEnv(gym.Env):
         self.agent_paths = {agent: [] for agent in self.agents}
         self.data_to_log = []
 
+        print(f"[RESET] Target positions: {self.target_positions}")
+        print(f"[RESET] Agent positions: {self.agent_positions}")
+
         observations = {agent: self._get_observation(agent) for agent in self.agents}
         return observations
 
@@ -49,19 +56,21 @@ class CustomSearchAndRescueEnv(gym.Env):
         dones = {}
         infos = {}
         observations = {}
+        agent_states = []
 
         for agent, action in actions.items():
-            reward, done, info = self._update(agent, action)
+            reward, done, info, agent_state = self._update(agent, action)
             rewards[agent] = reward
             dones[agent] = done
             infos[agent] = info
             observations[agent] = self._get_observation(agent)
+            agent_states.append(agent_state)
 
         self.time += 1
         done = self.time >= self.max_steps
         dones["__all__"] = done
 
-        return observations, rewards, dones, infos
+        return observations, rewards, dones, infos,agent_states
 
     def _update(self, agent, action):
         old_pos = self.agent_positions[agent]
@@ -69,8 +78,12 @@ class CustomSearchAndRescueEnv(gym.Env):
         new_pos = tuple(int(i) for i in new_pos)
         self.agent_positions[agent] = new_pos
         self.visited_positions.add(new_pos)
+        
 
         detected_targets = [t for t in self.target_positions if self._in_observation_range(new_pos, t)]
+
+        if detected_targets:
+            print(f"[Step {self.time}] {agent} found a victim at {new_pos}!")
         reward = len(detected_targets) * 10.0
 
         agent_state = {
@@ -89,10 +102,13 @@ class CustomSearchAndRescueEnv(gym.Env):
             "surroundings": [[int(x), int(y)] for x, y in self._get_surroundings(new_pos)],
             "planned_path": [[float(a), float(b)] for a, b in self._generate_path(agent, self._get_current_goal(agent))]
         }
-
+        self.agent_states[agent] = agent_state
         self.data_to_log.append(agent_state)
 
-        return reward, False, {}
+        #print(f"[Step {self.time}] Agent State:\n{json.dumps(agent_state, indent=2)}")
+
+
+        return reward, False,{},agent_state
 
     def _move(self, pos, action):
         x, y = pos
@@ -180,6 +196,9 @@ class CustomSearchAndRescueEnv(gym.Env):
         except Exception as e:
             print(f"Error writing JSON: {e}")
 
+    def get_agent_states(self):
+        return self.agent_states
+
 
 
 config = {
@@ -198,7 +217,9 @@ done = {"__all__": False}
 
 while not done["__all__"]:
     actions = {agent: env.action_space.sample() for agent in env.agents}
-    obs, rewards, done, info = env.step(actions)
+    obs, rewards, done, info, agent_states = env.step(actions)
     env.render()
+
+
 
 env.close()
